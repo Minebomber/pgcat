@@ -4,10 +4,10 @@ use bytes::{Buf, BytesMut};
 use log::{debug, error};
 use once_cell::sync::OnceCell;
 use regex::{Regex, RegexSet};
-use sqlparser::ast::Statement::{Delete, Insert, Query, StartTransaction, Update};
+use sqlparser::ast::Statement::{Query, StartTransaction, Update};
 use sqlparser::ast::{
-    Assignment, BinaryOperator, Expr, Ident, JoinConstraint, JoinOperator, SetExpr, Statement,
-    TableFactor, TableWithJoins, Value,
+    Assignment, BinaryOperator, Delete, Expr, FromTable, Ident, Insert, JoinConstraint,
+    JoinOperator, SetExpr, Statement, TableFactor, TableWithJoins, Value,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -491,7 +491,7 @@ impl QueryRouter {
         let mut table_names = Vec::new();
 
         match q {
-            Insert {
+            Statement::Insert(Insert {
                 or,
                 into: _,
                 table_name,
@@ -504,7 +504,11 @@ impl QueryRouter {
                 on: _,
                 returning: _,
                 ignore: _,
-            } => {
+                table_alias: _,
+                replace_into: _,
+                priority: _,
+                insert_alias: _,
+            }) => {
                 // Not supported in postgres.
                 assert!(or.is_none());
                 assert!(partitioned.is_none());
@@ -515,7 +519,7 @@ impl QueryRouter {
                     Self::process_query(source, &mut exprs, &mut table_names, &Some(columns));
                 }
             }
-            Delete {
+            Statement::Delete(Delete {
                 tables,
                 from,
                 using,
@@ -523,7 +527,7 @@ impl QueryRouter {
                 returning: _,
                 order_by: _,
                 limit: _,
-            } => {
+            }) => {
                 if let Some(expr) = selection {
                     exprs.push(expr.clone());
                 }
@@ -531,6 +535,9 @@ impl QueryRouter {
                 // Multi tables delete are not supported in postgres.
                 assert!(tables.is_empty());
 
+                let from = match from {
+                    FromTable::WithFromKeyword(from) | FromTable::WithoutKeyword(from) => from,
+                };
                 Self::process_tables_with_join(from, &mut exprs, &mut table_names);
                 if let Some(using_tbl_with_join) = using {
                     Self::process_tables_with_join(
